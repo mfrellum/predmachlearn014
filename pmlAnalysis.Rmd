@@ -1,0 +1,150 @@
+---
+title: "pmlAnalysis"
+author: "Morten Frellumstad"
+date: "Wednesday, May 06, 2015"
+output: html_document
+---
+The R-code show how I built my model, tested it, estimated out-of-sample-error and used it to predict the class of the 20 cases in "pml-testing.csv" the validation set. 
+
+The comments tell why I made the choises I made. E.g. how I used cross validation and why I selected to use Random Forest to make the model.
+
+## Load libraryes and set seed to get reproducable results
+```
+library(data.table)
+library(dplyr)
+library(kernlab)
+library(caret)
+library(randomForest)
+
+set.seed(1231) 
+```
+## Read training data
+```
+DT <- tbl_dt(fread("pml-training.csv",stringsAsFactors=TRUE,
+                   na.strings="NA"))
+```
+
+## Explore structure of training data (not values)
+```
+unique(DT$classe)
+unique(DT$user_name)
+View(DT)
+```
+
+## Select variables 
+The data is a set of timeseries. Most of the variables are summary statistics based on the 
+previous observations in the same time frame. Only lines with new_window=="yes" are summary lines. To use these variables for prediction the test vectors need to be summary lines. We do not know that so that is why I chose only the variables present inn all lines. 
+```
+sumFet <- which(is.na(DT[23,])|DT[23,]=="") # See from observation that line 23 is not a summary line
+DT <- DT[,-sumFet,with=FALSE]
+```
+V1, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window (variables [1:7]) are not sensor data, but related to how the experiment was conducted. The test set and probably the validation set are subsamples of the original training set.Using these experiment variables will probably give you a 100% prediction rate, but that would be a grose
+overfitting. You could probably make a lookup table.
+
+So I exclude [1:7] from training and prediction. For prediction I allso excluded "classe/problem_id" in prediction. 
+
+## Explore structure of the remaining training data
+```
+tmp <- sapply(DT,function(x) sum(x=="#DIV/0!"))
+tmp2 <- sapply(DT,function(x) sum(is.na(x)))
+tmp3 <- sapply(DT,mean)
+notNum <- which(is.na(tmp3)) # Not numerical variables
+```
+These values told me which variables could be used for calculations without modifications. It turned out to be alle the sensor variables.
+
+## Split training and test (we have a validation set of size 20)
+```
+inTrain <-  createDataPartition(y = DT$user_name,p=0.80,list=FALSE) #Sampling considers user_name
+training <- DT[inTrain,]
+testing  <- DT[-inTrain,]
+```
+
+## Chose methode to build model
+Given the nature of the data a desision tree should work: 
+```
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the 
+front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) 
+and throwing the hips to the front (Class E).
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3as43hIvO
+```
+I would expect a tree model that splits on variables indicating movments related to the different classes (A-E).
+
+I chose Random forest which is more robust than a single tree.
+
+## Train model and use cross validation 
+Idealy I want a Leave-one-person-out Cross Validation with folds based on person (or maybe num_window) (6-fold (1 per person)). The data is a set of timeseries so it is natural to use folding. I did not have the time to find a good way of doing this. So I used a ordinary 6 folds cross validation. That also worked well.
+
+Training the Random forrest model takes a LONNNNG time on my computer!
+```
+model <- train(classe ~ ., data=training[,8:60,with=FALSE],method="rf",
+               trControl=trainControl(method="cv",number=6),
+               prox=TRUE,allowParallel=TRUE)
+```
+
+## Predict training set and estimate Out-of-sample-error
+```
+tanswers <- predict(model,newdata=testing[,8:59,with=FALSE])
+confusionMatrix(tanswers,testing$classe)
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    A    B    C    D    E
+         A 1113    4    0    0    0
+         B    0  770    4    0    0
+         C    0    0  675    6    0
+         D    0    0    2  611    2
+         E    0    0    0    0  736
+
+Overall Statistics
+                                          
+               Accuracy : 0.9954          
+                 95% CI : (0.9928, 0.9973)
+    No Information Rate : 0.2837          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.9942          
+ Mcnemar's Test P-Value : NA              
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E
+Sensitivity            1.0000   0.9948   0.9912   0.9903   0.9973
+Specificity            0.9986   0.9987   0.9981   0.9988   1.0000
+Pos Pred Value         0.9964   0.9948   0.9912   0.9935   1.0000
+Neg Pred Value         1.0000   0.9987   0.9981   0.9982   0.9994
+Prevalence             0.2837   0.1973   0.1736   0.1573   0.1881
+Detection Rate         0.2837   0.1963   0.1721   0.1557   0.1876
+Detection Prevalence   0.2847   0.1973   0.1736   0.1568   0.1876
+Balanced Accuracy      0.9993   0.9968   0.9947   0.9945   0.9986
+```
+Accuracy : 0.9954 => Estimated Out of sample error ~ (1-0.9954)=0.0046 (0.46%)
+
+## Read validation set
+```
+validationset <- tbl_dt(fread("pml-testing.csv",stringsAsFactors=TRUE,
+                              na.strings=c("NA",""," ","#DIV/0!")))
+validationset <- validationset[,-sumFet,with=FALSE]
+validationset <- validationset[,8:59,with=FALSE]
+```
+
+## Predict 20 different test cases (validation set)
+```
+answers <- predict(model,newdata=validationset)
+```
+
+# Write answers to files for submission
+```
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+pml_write_files(as.character(answers))
+```
+
+## Success! :-)
+All 20 submissions returned "Correct".
