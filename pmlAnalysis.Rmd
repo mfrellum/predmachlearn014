@@ -25,21 +25,25 @@ DT <- tbl_dt(fread("pml-training.csv",stringsAsFactors=TRUE,
 ```
 
 ## Explore structure of training data (not values)
+Visual inspection of:
 ```
+str(DT)
+names(DT)
 unique(DT$classe)
 unique(DT$user_name)
 View(DT)
 ```
+The data is a set of timeseries. Most of the variables are summary statistics based on the 
+previous sensor data in the same time frame. Only lines with new_window=="yes" are summary lines. 
 
 ## Select variables 
-The data is a set of timeseries. Most of the variables are summary statistics based on the 
-previous observations in the same time frame. Only lines with new_window=="yes" are summary lines. To use these variables for prediction the test vectors need to be summary lines. We do not know that so that is why I chose only the variables present inn all lines. 
+To use the summary variables for prediction the test vectors need to be summary lines. We do not know that to be the case so that is why I chose only the variables present inn all lines. It turned out that none of the lines in the Validation set were summary lines, so that was a good choice. 
 ```
 sumFet <- which(is.na(DT[23,])|DT[23,]=="") # See from observation that line 23 is not a summary line
 DT <- DT[,-sumFet,with=FALSE]
 ```
-V1, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window (variables [1:7]) are not sensor data, but related to how the experiment was conducted. The test set and probably the validation set are subsamples of the original training set.Using these experiment variables will probably give you a 100% prediction rate, but that would be a grose
-overfitting. You could probably make a lookup table.
+V1, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window (variables [1:7]) are not sensor data, but related to how the experiment was conducted. The test set and probably the validation set are subsamples of the original training set.Using these experiment variables would probably give you a 100% prediction rate, but that would be a grose
+overfitting. You could probably make a lookup table. The timestamps could have been used in an other context (E.g. summary data over time windows) but would have to be transformed to remove experiment related bias.
 
 So I exclude [1:7] from training and prediction. For prediction I allso excluded "classe/problem_id" in prediction. 
 
@@ -54,9 +58,11 @@ These values told me which variables could be used for calculations without modi
 
 ## Split training and test (we have a validation set of size 20)
 ```
-inTrain <-  createDataPartition(y = DT$user_name,p=0.80,list=FALSE) #Sampling considers user_name
-training <- DT[inTrain,]
-testing  <- DT[-inTrain,]
+DF <- as.data.frame(DT) # could not make inTrain-index to work with data.table
+rm(DT)
+inTrain <-  createDataPartition(y = DF$user_name,p=0.80,list=FALSE) #Sampling considers user_name
+training <- DF[inTrain,]
+testing  <- DF[-inTrain,]
 ```
 
 ## Chose methode to build model
