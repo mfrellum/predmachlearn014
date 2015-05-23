@@ -20,18 +20,18 @@ set.seed(1231)
 ```
 ## Read training data
 ```
-DT <- tbl_dt(fread("pml-training.csv",stringsAsFactors=TRUE,
-                   na.strings="NA"))
+dta <- read.csv("pml-training.csv")
 ```
+First I got into truble with data.table and fread (stringsAsFactors) that did not play well with createDataPartition and randomForest. read.csv worked without tuning of arguments.
 
 ## Explore structure of training data (not values)
 Visual inspection of:
 ```
-str(DT)
-names(DT)
-unique(DT$classe)
-unique(DT$user_name)
-View(DT)
+str(dta)
+names(dta)
+unique(dta$classe)
+unique(dta$user_name)
+View(dta)
 ```
 The data is a set of timeseries. Most of the variables are summary statistics based on the 
 previous sensor data in the same time frame. Only lines with new_window=="yes" are summary lines. 
@@ -39,8 +39,8 @@ previous sensor data in the same time frame. Only lines with new_window=="yes" a
 ## Select variables 
 To use the summary variables for prediction the test vectors need to be summary lines. We do not know that to be the case so that is why I chose only the variables present inn all lines. It turned out that none of the lines in the Validation set were summary lines, so that was a good choice. 
 ```
-sumFet <- which(is.na(DT[23,])|DT[23,]=="") # See from observation that line 23 is not a summary line
-DT <- DT[,-sumFet,with=FALSE]
+sumFet <- which(is.na(dta[23,])|dta[23,]=="") # See from observation that line 23 is not a summary line
+dta <- dta[,-sumFet]
 ```
 V1, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window (variables [1:7]) are not sensor data, but related to how the experiment was conducted. The test set and probably the validation set are subsamples of the original training set.Using these experiment variables would probably give you a 100% prediction rate, but that would be a grose
 overfitting. You could probably make a lookup table. The timestamps could have been used in an other context (E.g. summary data over time windows) but would have to be transformed to remove experiment related bias.
@@ -49,20 +49,18 @@ So I exclude [1:7] from training and prediction. For prediction I allso excluded
 
 ## Explore structure of the remaining training data
 ```
-tmp <- sapply(DT,function(x) sum(x=="#DIV/0!"))
-tmp2 <- sapply(DT,function(x) sum(is.na(x)))
-tmp3 <- sapply(DT,mean)
+tmp <- sapply(dta,function(x) sum(x=="#DIV/0!"))
+tmp2 <- sapply(dta,function(x) sum(is.na(x)))
+tmp3 <- sapply(dta,mean)
 notNum <- which(is.na(tmp3)) # Not numerical variables
 ```
 These values told me which variables could be used for calculations without modifications. It turned out to be alle the sensor variables.
 
 ## Split training and test (we have a validation set of size 20)
 ```
-DF <- as.data.frame(DT) # could not make inTrain-index to work with data.table
-rm(DT)
-inTrain <-  createDataPartition(y = DF$user_name,p=0.80,list=FALSE) #Sampling considers user_name
-training <- DF[inTrain,]
-testing  <- DF[-inTrain,]
+inTrain <-  createDataPartition(y = dta$user_name,p=0.80,list=FALSE) #Sampling considers user_name
+training <- dta[inTrain,]
+testing  <- dta[-inTrain,]
 ```
 
 ## Chose methode to build model
@@ -83,23 +81,23 @@ Idealy I want a Leave-one-person-out Cross Validation with folds based on person
 
 Training the Random forrest model takes a LONNNNG time on my computer!
 ```
-model <- train(classe ~ ., data=training[,8:60,with=FALSE],method="rf",
+model <- train(classe ~ ., data=training[,8:60],method="rf",
                trControl=trainControl(method="cv",number=6),
                prox=TRUE,allowParallel=TRUE)
 ```
 
 ## Predict training set and estimate Out-of-sample-error
 ```
-tanswers <- predict(model,newdata=testing[,8:59,with=FALSE])
+tanswers <- predict(model,newdata=testing[,8:59])
 confusionMatrix(tanswers,testing$classe)
 Confusion Matrix and Statistics
 
           Reference
 Prediction    A    B    C    D    E
-         A 1113    4    0    0    0
-         B    0  770    4    0    0
-         C    0    0  675    6    0
-         D    0    0    2  611    2
+         A 1112    5    0    0    0
+         B    0  769    2    0    1
+         C    1    0  675    4    0
+         D    0    0    4  613    1
          E    0    0    0    0  736
 
 Overall Statistics
@@ -115,23 +113,22 @@ Overall Statistics
 Statistics by Class:
 
                      Class: A Class: B Class: C Class: D Class: E
-Sensitivity            1.0000   0.9948   0.9912   0.9903   0.9973
-Specificity            0.9986   0.9987   0.9981   0.9988   1.0000
-Pos Pred Value         0.9964   0.9948   0.9912   0.9935   1.0000
-Neg Pred Value         1.0000   0.9987   0.9981   0.9982   0.9994
+Sensitivity            0.9991   0.9935   0.9912   0.9935   0.9973
+Specificity            0.9982   0.9990   0.9985   0.9985   1.0000
+Pos Pred Value         0.9955   0.9961   0.9926   0.9919   1.0000
+Neg Pred Value         0.9996   0.9984   0.9981   0.9988   0.9994
 Prevalence             0.2837   0.1973   0.1736   0.1573   0.1881
-Detection Rate         0.2837   0.1963   0.1721   0.1557   0.1876
-Detection Prevalence   0.2847   0.1973   0.1736   0.1568   0.1876
-Balanced Accuracy      0.9993   0.9968   0.9947   0.9945   0.9986
+Detection Rate         0.2835   0.1960   0.1721   0.1563   0.1876
+Detection Prevalence   0.2847   0.1968   0.1733   0.1575   0.1876
+Balanced Accuracy      0.9987   0.9963   0.9948   0.9960   0.9986
 ```
-Accuracy : 0.9954 => Estimated Out of sample error ~ (1-0.9954)=0.0046 (0.46%)
+Accuracy : 0.9954 => Estimated Out of sample error ~ (1-0.9954)=0.0046=0.46%
 
 ## Read validation set
 ```
-validationset <- tbl_dt(fread("pml-testing.csv",stringsAsFactors=TRUE,
-                              na.strings=c("NA",""," ","#DIV/0!")))
-validationset <- validationset[,-sumFet,with=FALSE]
-validationset <- validationset[,8:59,with=FALSE]
+validationset <- read.csv("pml-testing.csv")
+validationset <- validationset[,-sumFet]
+validationset <- validationset[,8:59]
 ```
 
 ## Predict 20 different test cases (validation set)
